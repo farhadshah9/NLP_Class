@@ -1,0 +1,77 @@
+---
+title: "Class Work - Week 1"
+author: "Farhad Shah"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    css: !expr here::here("./StylesTemplates/jr_19.css")
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(fig.width=8, fig.height=5, fig.align = 'left', fig.path='Figs/', cache.path='Cache/', eval=T, echo=T, tidy=TRUE,  cache=F, message=F, warning=F, stringsAsFactors=F, yaml.eval.expr = TRUE)  
+
+library(xfun)
+pkg_attach("tidyverse", "here", "kableExtra", "RCurl", "psych", "knitr", "RColorBrewer", 'dplyr', install=T)
+
+jamie.theme <- theme_bw() + theme(axis.line = element_line(colour = "black"), panel.grid.minor = element_blank(), panel.grid.major = element_blank(), panel.border = element_blank(), panel.background = element_blank(), legend.title= element_blank())  #custom theme ggplot2
+
+
+print.me <- function(x, ...) {
+if (nrow(x) > 200){
+   len <- 200 
+    } else {
+       len <- (nrow(x))
+}
+   x[1:len,] %>%
+   kbl(digits=2, align= 'l', booktabs=T) %>%
+   kable_styling(fixed_thead = T) %>%
+   kable_paper("striped", full_width = T, html_font = "Helvetica", font_size = 12) %>%
+   row_spec(0, color = "white", background = "#5b705f", font_size = 12) %>%
+   scroll_box(width = "700px", height = "500px") %>%
+   asis_output()
+}
+
+registerS3method("knit_print", "data.frame", print.me)
+#to_R <- read.csv(here("data", "MyRaw.txt")) ---- using 'here' to read in data
+```
+
+# My First Homework
+I'm going to produce a string called marry had a little lamb in one code block. Then I'm going to split the string to one word per row. Then I'm going to add a variable called Nletters that counts the letters in each word. The other part of my homework is to style my css to my personal needs.
+
+## It's getting ugly already
+```{r}
+#print a sequence of numbers 1:10
+myseq <- seq(1:10)
+print(myseq)
+```
+```{r}
+#produce a string
+sentence <- "mary had a little lamb"
+
+#split the string
+words <- unlist(strsplit(sentence, " "))
+
+# add a variable to count letters in each word
+df <- data.frame(
+  word = words,
+  stringsAsFactors = FALSE
+)
+df <- df %>%
+  mutate(Nletters = nchar(word))
+print(df)
+```
+# Next challenge
+Now I'm gonna add a new string in which the sentence "marry had a little lamb" repeats 10000 times in rows
+
+```{r}
+# Create a string repeated 10,000 times (one per row)
+df_sentences <- data.frame(
+  sentence = rep("marry had a little lamb", 10000)
+)
+
+head(df_sentences)
+```
+

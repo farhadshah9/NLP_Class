@@ -1,0 +1,84 @@
+---
+title: "sticks_messy"
+output: html_document
+date: "2026-01-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+list.files()
+```
+
+```{r}
+# Read the text file into R
+text_raw <- readLines("sticks_messy.txt")
+
+# Combine lines into one string
+text_raw <- paste(text_raw, collapse = " ")
+```
+```{r}
+# Create a function to clean text
+clean_text <- function(text) {
+  # convert all text to lowercase
+  text <- tolower(text)   
+  # remove punctuation & symbols
+  text <- gsub("[^a-z ]", " ", text)
+  # remove extra spaces
+  text <- gsub("\\s+", " ", text)
+  
+  return(text)
+}
+```
+
+
+```{r}
+# Apply the cleaning function to the text
+text_clean <- clean_text(text_raw)
+```
+
+```{r}
+# Split the text into separate words
+words <- unlist(strsplit(text_clean, " "))
+
+# remove blanks
+words <- words[words != ""]
+
+
+# Put the words into a data frame
+words_df <- data.frame(word = words)
+
+# Look at the first few words
+head(words_df)
+```
+
+```{r}
+# Count total number of words
+total_words <- length(words)
+
+# Print total word count
+total_words
+```
+
+```{r}
+# Count number of unique words
+unique_words <- length(unique(words))
+
+# Print number of unique words
+unique_words
+```
+
+```{r}
+# Compute TTR
+ttr <- unique_words / total_words
+
+# Print TTR value
+ttr
+```
+
+
+
+
+

@@ -1,0 +1,98 @@
+---
+title: "Cheatsheet"
+author: "Farhad"
+output:
+  html_document:
+    css: styles.css
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#1.Creating a function
+```{r}
+add_numbers <- function(x, y) {
+
+  # sum two values  
+  result <- x + y      
+  
+  # print the result
+  return(result)       
+}
+
+add_numbers(4, 6)
+
+```
+
+#2. Cleaning Text
+```{r}
+# function to clean  text
+clean_text <- function(text) {
+  
+  # Convert all letters to lowercase
+  text <- tolower(text)             
+  
+  # Remove numbers, punctuation, and symbols
+  text <- gsub("[^a-z ]", " ", text) 
+  
+  # Replace extra spaces
+  text <- gsub("\\s+", " ", text)    
+  
+  return(text)                      
+}
+
+clean_text("Hello!!! This is MESSY text 123")
+```
+
+
+#3. Split Text
+```{r}
+#string
+sentence <- "mary had a little lamb"     
+
+# Split the sentence
+words <- strsplit(sentence, " ")         
+
+ # Convert the list into a vector
+words_vector <- unlist(words) 
+ # Create a data frame with one word per row
+data.frame(word = words_vector)         
+```
+
+
+#4. Counting Words (Tokens)
+```{r}
+# Create a vector of words
+words <- c("this", "is", "a", "test", "this")  
+
+# Count how many total words there are
+total_words <- length(words)                   
+
+ # Display the total word count
+total_words                                  
+```
+
+
+#5. Type–Token Ratio (TTR)
+```{r}
+# Create a vector of words
+words <- c("this", "is", "a", "test", "this")  
+
+# Find the unique words (types)
+unique_words <- unique(words)   
+
+# Count the number of unique words
+num_unique <- length(unique_words)            
+
+# Count the total number of words
+num_total <- length(words)                     
+
+# Divide types by tokens to get TTR
+ttr <- num_unique / num_total                  
+
+# Display the Type-Token Ratio
+ttr                                           
+```
+

@@ -94,5 +94,19 @@ ttr <- num_unique / num_total
 
 # Display the Type-Token Ratio
 ttr                                           
-```
+
+#6. Calculate Mean
+```{r}
+mymean <- function(numbers) {
+# add all numbers
+total <- sum(numbers)      
+
+# how many numbers
+count <- length(numbers)   
+mean_value <- total / count
+return(mean_value)
+}
+
+mymean(c(3, 9, 12, 6, 18))
+``````
 

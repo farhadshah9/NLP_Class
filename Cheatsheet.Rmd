@@ -93,7 +93,8 @@ num_total <- length(words)
 ttr <- num_unique / num_total                  
 
 # Display the Type-Token Ratio
-ttr                                           
+ttr  
+```
 
 #6. Calculate Mean
 ```{r}
@@ -108,5 +109,5 @@ return(mean_value)
 }
 
 mymean(c(3, 9, 12, 6, 18))
-``````
+```
 

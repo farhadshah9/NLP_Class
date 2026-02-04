@@ -93,21 +93,42 @@ num_total <- length(words)
 ttr <- num_unique / num_total                  
 
 # Display the Type-Token Ratio
-ttr  
+ttr                                           
 ```
 
 #6. Calculate Mean
+
 ```{r}
 mymean <- function(numbers) {
-# add all numbers
-total <- sum(numbers)      
-
-# how many numbers
-count <- length(numbers)   
-mean_value <- total / count
-return(mean_value)
+  # add all numbers
+  total <- sum(numbers)      
+  # how many numbers
+  count <- length(numbers)   
+  mean_value <- total / count
+  return(mean_value)
 }
 
 mymean(c(3, 9, 12, 6, 18))
+```
+
+#7. Lowercase all letter
+```{r}
+ text <- tolower(text)                 # lowercase all text
+```
+
+#8. Expand Contractions
+```{r}
+  text <- replace_contraction(text)     # expand contractions
+```
+
+#9. Load Stopwords
+```{r}
+load("MIT_stops.rda")   # loads the stopword list into R
+stop_words <- MIT_stops # rename it
+```
+
+#10. Remove Extra Spaces
+```{r}
+  text <- str_squish(text)              # remove extra spaces
 ```
 

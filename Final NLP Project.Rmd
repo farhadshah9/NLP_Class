@@ -1,0 +1,740 @@
+---
+title: "Analyzing Language Simplification in Alzheimer’s Disease Using Basic NLP Methods"
+author: "Farhad"
+date: "`r format(Sys.Date(), '%B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    code_folding: hide
+    css: unabomber_pro.css
+---
+
+## 1. Load Libraries
+
+This section loads only the required packages for data wrangling, tokenization, string cleaning, and plotting.
+
+```{r load-libraries, message=FALSE, warning=FALSE}
+# load tidyverse for data manipulation and pipes
+library(tidyverse)
+
+# load tidytext for tokenization and stopword handling
+library(tidytext)
+
+# load stringr for regex-based text cleaning
+library(stringr)
+
+# load ggplot2 for visualizations
+library(ggplot2)
+```
+
+## 2. Read and Parse `.cha` Files
+
+This section reads all transcript files, keeps only participant speech lines that start with `*CHI:`, collapses valid speech into one text per file, and removes empty transcripts.
+
+```{r read-parse-cha}
+# set preferred data folder provided by user
+preferred_root <- "/Users/dr.farhadshah/Library/CloudStorage/OneDrive-TempleUniversity/Shah_RData/Week8_NLPClass/data"
+
+# set fallback data folder for portable project execution
+fallback_root <- "data"
+
+# select preferred folder when it exists, otherwise use fallback folder
+root_folder <- ifelse(dir.exists(preferred_root), preferred_root, fallback_root)
+
+# collect all .cha files recursively
+cha_files <- list.files(
+  path = root_folder,            # start from data/
+  pattern = "\\.cha$",           # keep only .cha files
+  recursive = TRUE,              # search all nested folders
+  full.names = TRUE              # return full file paths
+)
+
+# stop early if no transcript files are found
+if (length(cha_files) == 0) {
+  stop("No .cha files were found under data/. Please check the folder path.")
+}
+
+# define a helper that extracts participant lines and collapses them
+extract_chi_text <- function(file_path) {
+  # read all lines from one transcript file
+  lines <- readLines(file_path, warn = FALSE, encoding = "UTF-8")
+
+  # keep participant speech lines that start with *CHI: or *PAR: (case-insensitive)
+  chi_lines <- lines %>%
+    str_subset(regex("^\\s*\\*(CHI|PAR):", ignore_case = TRUE))
+
+  # fallback to all lines if no participant lines are found
+  if (length(chi_lines) == 0) {
+    chi_lines <- lines
+  }
+
+  # remove leading speaker prefix from each kept line
+  chi_lines <- chi_lines %>%
+    str_replace(regex("^\\s*\\*(CHI|PAR):\\s*", ignore_case = TRUE), "")
+
+  # collapse all participant lines into one text string
+  chi_text <- chi_lines %>%
+    paste(collapse = " ") %>%
+    str_squish()
+
+  # return collapsed participant text
+  chi_text
+}
+
+# build one row per file with metadata and extracted participant text
+transcripts <- tibble(file_path = cha_files) %>%
+  mutate(
+    file_name = basename(file_path),  # store file name
+
+    group = case_when(  # derive group from path (case-insensitive)
+      str_detect(file_path, regex("control", ignore_case = TRUE)) ~ "control",
+      str_detect(file_path, regex("dementia", ignore_case = TRUE)) ~ "dementia",
+      TRUE ~ "unknown"
+    ),
+
+    task = case_when(  # derive task from path (case-insensitive)
+      str_detect(file_path, regex("cookie", ignore_case = TRUE)) ~ "cookie",
+      str_detect(file_path, regex("fluency", ignore_case = TRUE)) ~ "fluency",
+      str_detect(file_path, regex("recall", ignore_case = TRUE)) ~ "recall",
+      str_detect(file_path, regex("sentence", ignore_case = TRUE)) ~ "sentence",
+      TRUE ~ "other"
+    ),
+
+    full_text = map_chr(file_path, extract_chi_text)  # extract participant speech
+  ) %>%
+  filter(group %in% c("control", "dementia")) %>%  # keep only relevant groups
+  filter(!is.na(full_text)) %>%  # remove NA text
+  filter(str_trim(full_text) != "")  # remove empty transcripts
+
+# fallback if parsing removed everything (extra safety layer)
+if (nrow(transcripts) == 0) {
+
+  message("No CHI/PAR lines found — falling back to full transcript text.")
+
+  transcripts <- tibble(file_path = cha_files) %>%
+    mutate(
+      file_name = basename(file_path),  # store file name
+
+      group = case_when(
+        str_detect(file_path, regex("control", ignore_case = TRUE)) ~ "control",
+        str_detect(file_path, regex("dementia", ignore_case = TRUE)) ~ "dementia",
+        TRUE ~ "unknown"
+      ),
+
+      task = case_when(
+        str_detect(file_path, regex("cookie", ignore_case = TRUE)) ~ "cookie",
+        str_detect(file_path, regex("fluency", ignore_case = TRUE)) ~ "fluency",
+        str_detect(file_path, regex("recall", ignore_case = TRUE)) ~ "recall",
+        str_detect(file_path, regex("sentence", ignore_case = TRUE)) ~ "sentence",
+        TRUE ~ "other"
+      ),
+
+      full_text = map_chr(file_path, ~ paste(readLines(.x, warn = FALSE), collapse = " "))  # use full file text
+    ) %>%
+    filter(group %in% c("control", "dementia")) %>%
+    filter(str_trim(full_text) != "")
+}
+
+# print preview of parsed transcript table
+transcripts %>%
+  select(file_name, group, task, full_text) %>%
+  head(5)
+```
+
+## 3. Clean Text
+
+This section normalizes text by lowercasing, removing punctuation and numbers, and trimming extra spaces while keeping filler words like `um` and `uh`.
+
+```{r clean-text}
+# define a helper function for simple regex-based text cleaning
+clean_transcript_text <- function(text) {
+  text %>%
+    str_to_lower() %>%                       # convert all text to lowercase
+    str_replace_all("[^a-z\\s]", " ") %>% # remove punctuation and numbers
+    str_replace_all("\\s+", " ") %>%      # replace repeated spaces with one space
+    str_trim()                               # trim spaces at the edges
+}
+
+# apply cleaning to each transcript
+transcripts_clean <- transcripts %>%
+  mutate(clean_text = map_chr(full_text, clean_transcript_text))
+
+# remove any rows that become empty after cleaning
+transcripts_clean <- transcripts_clean %>%
+  filter(clean_text != "")
+
+# stop if cleaned data is empty
+if (nrow(transcripts_clean) == 0) {
+  stop("All transcripts became empty after cleaning. Please inspect input text.")
+}
+
+# print preview of cleaned data
+transcripts_clean %>%
+  select(file_name, group, task, clean_text) %>%
+  head(5)
+```
+
+## 4. Tokenization
+
+This section tokenizes text into words. One token table keeps all words for filler analysis, and another removes stopwords for lexical frequency analysis.
+
+```{r tokenization}
+# tokenize cleaned text into single words
+tokens_all <- transcripts_clean %>%
+  select(file_name, group, task, clean_text) %>%                      # keep needed columns
+  unnest_tokens(output = word, input = clean_text, token = "words") %>%  # split text into words
+  filter(word != "")                                                   # remove empty tokens
+
+# stop if tokenization produces no rows
+if (nrow(tokens_all) == 0) {
+  stop("Word tokenization produced no rows. Analysis cannot continue.")
+}
+
+# remove stopwords for lexical and repetition analysis
+tokens_nostop <- tokens_all %>%
+  anti_join(stop_words, by = "word")                                  # remove common stopwords
+
+# print preview of token data
+head(tokens_all, 10)
+```
+
+## 5. Feature Extraction
+
+This section computes transcript-level features: total words, unique words, and filler counts (`um`, `uh`). Then all features are merged into one dataframe.
+
+```{r feature-extraction}
+# compute total and unique words per file
+vocab_features <- tokens_all %>%
+  group_by(file_name, group, task) %>%                                 # group by transcript identity
+  summarise(
+    total_words = n(),                                                  # count all words
+    unique_words = n_distinct(word),                                    # count unique words
+    .groups = "drop"                                                   # remove grouping after summary
+  )
+
+# count filler words per file using only um and uh
+filler_features <- tokens_all %>%
+  filter(word %in% c("um", "uh")) %>%                                 # keep filler tokens only
+  group_by(file_name) %>%                                               # group by transcript file
+  summarise(
+    filler_count = n(),                                                 # count filler tokens
+    .groups = "drop"                                                   # remove grouping after summary
+  )
+
+# merge vocabulary and filler features
+features_df <- vocab_features %>%
+  left_join(filler_features, by = "file_name") %>%                     # attach filler counts
+  mutate(
+    filler_count = replace_na(filler_count, 0L),                        # replace missing filler counts with zero
+    TTR = if_else(total_words > 0, unique_words / total_words, 0)       # calculate type-token ratio per file
+  )
+
+# stop if feature table is empty
+if (nrow(features_df) == 0) {
+  stop("Feature extraction produced an empty dataframe.")
+}
+
+# print preview of merged features
+head(features_df, 10)
+
+# create simple group means for interpretation text
+feature_means <- features_df %>%
+  group_by(group) %>%                                                    # group by control and dementia
+  summarise(
+    mean_unique_words = mean(unique_words, na.rm = TRUE),               # average unique words by group
+    mean_filler_count = mean(filler_count, na.rm = TRUE),               # average filler count by group
+    mean_TTR = mean(TTR, na.rm = TRUE),                                 # average TTR by group
+    .groups = "drop"                                                    # remove grouping after summary
+  )
+
+# print short interpretation for feature extraction section
+if (nrow(feature_means) == 2) {
+  control_unique <- feature_means %>% filter(group == "control") %>% pull(mean_unique_words)  # get control unique mean
+  dementia_unique <- feature_means %>% filter(group == "dementia") %>% pull(mean_unique_words)  # get dementia unique mean
+  control_filler <- feature_means %>% filter(group == "control") %>% pull(mean_filler_count)  # get control filler mean
+  dementia_filler <- feature_means %>% filter(group == "dementia") %>% pull(mean_filler_count)  # get dementia filler mean
+
+  cat("\nFeature summary:\n")                                            # print header line
+  cat("Average unique words - control:", round(control_unique, 2), "\n")  # print control unique mean
+  cat("Average unique words - dementia:", round(dementia_unique, 2), "\n")  # print dementia unique mean
+  cat("Average filler count - control:", round(control_filler, 2), "\n")  # print control filler mean
+  cat("Average filler count - dementia:", round(dementia_filler, 2), "\n")  # print dementia filler mean
+
+  if (dementia_unique < control_unique) {                                # compare vocabulary diversity means
+    cat("The dementia group shows lower vocabulary diversity than the control group.\n")  # simple interpretation
+  } else {
+    cat("The dementia group does not show lower vocabulary diversity in this sample.\n")  # simple interpretation
+  }
+
+  if (dementia_filler > control_filler) {                                # compare filler usage means
+    cat("The dementia group uses more filler words (um/uh) than the control group.\n")  # simple interpretation
+  } else {
+    cat("The dementia group does not use more filler words than the control group.\n")  # simple interpretation
+  }
+}
+```
+
+## 6. Bigram Analysis
+
+This section creates bigrams, removes stopwords from both words, removes missing values, and counts bigram frequency by group.
+
+```{r bigram-analysis}
+# create raw bigrams from cleaned transcript text
+bigrams_raw <- transcripts_clean %>%
+  select(file_name, group, task, clean_text) %>%                       # keep needed columns
+  unnest_tokens(output = bigram, input = clean_text, token = "ngrams", n = 2)  # generate 2-word pairs
+
+# separate each bigram into two columns
+bigrams_sep <- bigrams_raw %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ", remove = FALSE)    # split bigram into word1 and word2
+
+# clean bigrams by removing missing values and stopwords in both positions
+bigrams_clean <- bigrams_sep %>%
+  filter(!is.na(word1), !is.na(word2)) %>%                              # remove NA pairs
+  anti_join(stop_words, by = c("word1" = "word")) %>%                 # remove stopwords from word1
+  anti_join(stop_words, by = c("word2" = "word"))                     # remove stopwords from word2
+
+# count bigram frequency by group
+bigram_counts <- bigrams_clean %>%
+  count(group, bigram, sort = TRUE)                                     # count and sort by frequency
+
+# print message when no valid bigrams exist
+if (nrow(bigram_counts) == 0) {
+  message("No valid bigrams found after filtering. Bigram plot will be skipped.")
+}
+
+# preview bigram counts
+head(bigram_counts, 10)
+```
+
+## 7. Visualizations
+
+This section builds the required plots. Each plot checks for empty data first to avoid faceting errors such as “Faceting variables must have at least one value”.
+
+```{r visualizations, fig.width=12, fig.height=8}
+# define common text styling for publication-quality plots
+common_plot_theme <- theme_minimal() +                                   # start with minimal theme
+  theme(
+    axis.text = element_text(size = 13),                                 # increase axis text size
+    axis.title = element_text(size = 15, face = "bold"),                # increase axis title size
+    plot.title = element_text(size = 17, face = "bold", hjust = 0.5),   # center and bold titles
+    strip.text = element_text(size = 13, face = "bold")                 # improve facet label readability
+  )
+
+# compute word counts by group from stopword-removed tokens
+word_counts <- tokens_nostop %>%
+  count(group, word, sort = TRUE)                                       # count words in each group
+
+# build top words dataset by group
+top_words <- word_counts %>%
+  group_by(group) %>%                                                    # process each group separately
+  slice_max(order_by = n, n = 10, with_ties = FALSE) %>%                # keep top 10 words per group
+  ungroup() %>%                                                          # remove grouping
+  filter(!is.na(group), !is.na(word))                                   # keep valid facet and term values
+
+# create top words plot only when data is available
+if (nrow(top_words) > 0 && n_distinct(top_words$group) > 0) {
+  top_words_plot <- ggplot(top_words, aes(x = reorder(word, n), y = n, fill = group)) +
+    geom_col(show.legend = FALSE) +                                     # draw bars
+    coord_flip() +                                                      # flip axes for readability
+    facet_wrap(~group, scales = "free") +                              # facet by group with free scales
+    labs(
+      title = "Top 10 Most Frequent Words (Control vs Dementia)",       # use clear publication title
+      x = "Word",                                                       # set x-axis label
+      y = "Word Count"                                                  # set y-axis label
+    ) +
+    scale_fill_manual(values = c("control" = "#2C7FB8", "dementia" = "#D95F0E")) +  # set consistent colors
+    common_plot_theme                                                   # apply common formatting
+
+  print(top_words_plot)                                                 # print top words plot
+} else {
+  message("Top words plot skipped: no valid data to facet.")
+}
+
+# build top bigrams dataset by group
+top_bigrams <- bigram_counts %>%
+  group_by(group) %>%                                                    # process each group separately
+  slice_max(order_by = n, n = 10, with_ties = FALSE) %>%                # keep top 10 bigrams per group
+  ungroup() %>%                                                          # remove grouping
+  filter(!is.na(group), !is.na(bigram))                                 # keep valid facet and term values
+
+# create top bigrams plot only when data is available
+if (nrow(top_bigrams) > 0 && n_distinct(top_bigrams$group) > 0) {
+  top_bigrams_plot <- ggplot(top_bigrams, aes(x = reorder(bigram, n), y = n, fill = group)) +
+    geom_col(show.legend = FALSE) +                                     # draw bars
+    coord_flip() +                                                      # flip axes for readability
+    facet_wrap(~group, scales = "free") +                              # facet by group with free scales
+    labs(
+      title = "Top 10 Most Frequent Bigrams (Control vs Dementia)",     # use clear publication title
+      x = "Bigram",                                                     # set x-axis label
+      y = "Bigram Count"                                                # set y-axis label
+    ) +
+    scale_fill_manual(values = c("control" = "#2C7FB8", "dementia" = "#D95F0E")) +  # set consistent colors
+    common_plot_theme                                                   # apply common formatting
+
+  print(top_bigrams_plot)                                               # print top bigrams plot
+} else {
+  message("Top bigrams plot skipped: no valid data to facet.")
+}
+
+# create unique words boxplot only when data exists
+if (nrow(features_df) > 0 && n_distinct(features_df$group) > 0) {
+  unique_words_plot <- ggplot(features_df, aes(x = group, y = unique_words, fill = group)) +
+    geom_boxplot(alpha = 0.7) +                                         # draw boxplot for unique words
+    labs(
+      title = "Vocabulary Diversity by Group",                          # use clear publication title
+      x = "Group",                                                      # set x-axis label
+      y = "Unique Word Count"                                           # set y-axis label
+    ) +
+    scale_fill_manual(values = c("control" = "#2C7FB8", "dementia" = "#D95F0E")) +  # set consistent colors
+    common_plot_theme                                                   # apply common formatting
+
+  print(unique_words_plot)                                              # print unique words boxplot
+} else {
+  message("Unique words boxplot skipped: no valid data.")
+}
+
+# create filler count boxplot only when data exists
+if (nrow(features_df) > 0 && n_distinct(features_df$group) > 0) {
+  filler_count_plot <- ggplot(features_df, aes(x = group, y = filler_count, fill = group)) +
+    geom_boxplot(alpha = 0.7) +                                         # draw boxplot for filler counts
+    labs(
+      title = "Filler Word Usage by Group",                             # use clear publication title
+      x = "Group",                                                      # set x-axis label
+      y = "Filler Word Count (um + uh)"                                 # set y-axis label
+    ) +
+    scale_fill_manual(values = c("control" = "#2C7FB8", "dementia" = "#D95F0E")) +  # set consistent colors
+    common_plot_theme                                                   # apply common formatting
+
+  print(filler_count_plot)                                              # print filler count boxplot
+} else {
+  message("Filler count boxplot skipped: no valid data.")
+}
+
+# print short interpretation for plot section
+if (nrow(feature_means) == 2) {
+  control_unique <- feature_means %>% filter(group == "control") %>% pull(mean_unique_words)  # get control unique mean
+  dementia_unique <- feature_means %>% filter(group == "dementia") %>% pull(mean_unique_words)  # get dementia unique mean
+  control_filler <- feature_means %>% filter(group == "control") %>% pull(mean_filler_count)  # get control filler mean
+  dementia_filler <- feature_means %>% filter(group == "dementia") %>% pull(mean_filler_count)  # get dementia filler mean
+
+  cat("\nPlot interpretation:\n")                                        # print header line
+  if (dementia_unique < control_unique) {                                # compare unique word means
+    cat("The vocabulary plot suggests lower vocabulary diversity in the dementia group.\n")  # simple interpretation
+  } else {
+    cat("The vocabulary plot does not show lower vocabulary diversity for the dementia group.\n")  # simple interpretation
+  }
+
+  if (dementia_filler > control_filler) {                                # compare filler means
+    cat("The filler plot suggests more filler words in the dementia group.\n")  # simple interpretation
+  } else {
+    cat("The filler plot does not suggest more filler words in the dementia group.\n")  # simple interpretation
+  }
+}
+```
+
+## 8. Statistical Tests
+
+This section runs the requested t-tests only when both groups are present and have enough observations.
+
+```{r statistical-tests}
+# create a helper function for safe two-group t-tests
+safe_t_test <- function(data, formula_obj) {
+  # keep only target groups for testing
+  test_data <- data %>%
+    filter(group %in% c("control", "dementia")) %>%                  # keep two comparison groups
+    mutate(group = factor(group))                                       # convert group to factor
+
+  # count rows per group
+  group_counts <- test_data %>%
+    count(group)
+
+  # return message when group structure is invalid
+  if (nrow(group_counts) != 2 || any(group_counts$n < 2)) {
+    return("T-test skipped: both groups must exist with at least 2 files each.")
+  }
+
+  # run t-test when checks pass
+  t.test(formula_obj, data = test_data)
+}
+
+# run t-test for unique words by group
+ttest_unique <- safe_t_test(features_df, unique_words ~ group)
+
+# run t-test for filler count by group
+ttest_filler <- safe_t_test(features_df, filler_count ~ group)
+
+# run t-test for TTR by group
+ttest_ttr <- safe_t_test(features_df, TTR ~ group)
+
+# define helper function for manual Cohen's d
+compute_cohens_d <- function(data, outcome_col) {
+  control_vals <- data %>%                                              # collect control values
+    filter(group == "control") %>%                                      # keep control rows
+    pull({{ outcome_col }})                                             # pull numeric outcome vector
+
+  dementia_vals <- data %>%                                             # collect dementia values
+    filter(group == "dementia") %>%                                     # keep dementia rows
+    pull({{ outcome_col }})                                             # pull numeric outcome vector
+
+  if (length(control_vals) < 2 || length(dementia_vals) < 2) {          # check minimum sample size
+    return(NA_real_)                                                    # return NA when effect size cannot be computed
+  }
+
+  mean_control <- mean(control_vals, na.rm = TRUE)                      # compute control mean
+  mean_dementia <- mean(dementia_vals, na.rm = TRUE)                    # compute dementia mean
+  sd_control <- sd(control_vals, na.rm = TRUE)                          # compute control standard deviation
+  sd_dementia <- sd(dementia_vals, na.rm = TRUE)                        # compute dementia standard deviation
+  n_control <- sum(!is.na(control_vals))                                # count non-missing control values
+  n_dementia <- sum(!is.na(dementia_vals))                              # count non-missing dementia values
+
+  pooled_sd <- sqrt(((n_control - 1) * sd_control^2 + (n_dementia - 1) * sd_dementia^2) / (n_control + n_dementia - 2))  # compute pooled SD
+
+  if (is.na(pooled_sd) || pooled_sd == 0) {                             # guard against invalid pooled SD
+    return(NA_real_)                                                    # return NA when denominator is invalid
+  }
+
+  (mean_dementia - mean_control) / pooled_sd                            # return Cohen's d with dementia-control direction
+}
+
+# compute Cohen's d for unique words
+cohens_d_unique <- compute_cohens_d(features_df, unique_words)
+
+# compute Cohen's d for filler count
+cohens_d_filler <- compute_cohens_d(features_df, filler_count)
+
+# compute Cohen's d for TTR
+cohens_d_ttr <- compute_cohens_d(features_df, TTR)
+
+# print labeled result for vocabulary diversity test
+cat("\nT-test result: unique_words ~ group\n")
+print(ttest_unique)
+
+# print labeled result for filler usage test
+cat("\nT-test result: filler_count ~ group\n")
+print(ttest_filler)
+
+# print labeled result for TTR test
+cat("\nT-test result: TTR ~ group\n")
+print(ttest_ttr)
+
+# print effect size summary
+cat("\nEffect size (Cohen's d, dementia - control):\n")
+cat("Unique words d =", round(cohens_d_unique, 3), "\n")
+cat("Filler count d =", round(cohens_d_filler, 3), "\n")
+cat("TTR d =", round(cohens_d_ttr, 3), "\n")
+
+# print short interpretation for statistical section
+if (inherits(ttest_unique, "htest")) {
+  if (ttest_unique$p.value < 0.05) {
+    cat("Unique words are significantly different between groups.\n")
+  } else {
+    cat("Unique words are not significantly different between groups.\n")
+  }
+}
+
+if (inherits(ttest_filler, "htest")) {
+  if (ttest_filler$p.value < 0.05) {
+    cat("Filler word use is significantly different between groups.\n")
+  } else {
+    cat("Filler word use is not significantly different between groups.\n")
+  }
+}
+
+if (inherits(ttest_ttr, "htest")) {
+  if (ttest_ttr$p.value < 0.05) {
+    cat("Type-token ratio is significantly different between groups.\n")
+  } else {
+    cat("Type-token ratio is not significantly different between groups.\n")
+  }
+}
+```
+
+## 9. Output
+
+This section prints final outputs including feature table, group summary statistics, and top frequency tables.
+
+```{r output}
+# print full feature dataframe
+features_df
+
+# compute descriptive statistics table per group
+summary_stats <- features_df %>%
+  group_by(group) %>%                                                   # summarize by group
+  summarise(
+    n_files = n(),                                                      # count files per group
+    mean_total_words = mean(total_words, na.rm = TRUE),                # mean of total words
+    median_total_words = median(total_words, na.rm = TRUE),            # median of total words
+    sd_total_words = sd(total_words, na.rm = TRUE),                    # standard deviation of total words
+    min_total_words = min(total_words, na.rm = TRUE),                  # minimum total words
+    max_total_words = max(total_words, na.rm = TRUE),                  # maximum total words
+    mean_unique_words = mean(unique_words, na.rm = TRUE),              # mean of unique words
+    median_unique_words = median(unique_words, na.rm = TRUE),          # median of unique words
+    sd_unique_words = sd(unique_words, na.rm = TRUE),                  # standard deviation of unique words
+    min_unique_words = min(unique_words, na.rm = TRUE),                # minimum unique words
+    max_unique_words = max(unique_words, na.rm = TRUE),                # maximum unique words
+    mean_filler_count = mean(filler_count, na.rm = TRUE),              # mean of filler count
+    median_filler_count = median(filler_count, na.rm = TRUE),          # median of filler count
+    sd_filler_count = sd(filler_count, na.rm = TRUE),                  # standard deviation of filler count
+    min_filler_count = min(filler_count, na.rm = TRUE),                # minimum filler count
+    max_filler_count = max(filler_count, na.rm = TRUE),                # maximum filler count
+    mean_TTR = mean(TTR, na.rm = TRUE),                                # mean of TTR
+    median_TTR = median(TTR, na.rm = TRUE),                            # median of TTR
+    sd_TTR = sd(TTR, na.rm = TRUE),                                    # standard deviation of TTR
+    min_TTR = min(TTR, na.rm = TRUE),                                  # minimum TTR
+    max_TTR = max(TTR, na.rm = TRUE),                                  # maximum TTR
+    .groups = "drop"                                                   # remove grouping
+  )
+
+# print summary table
+summary_stats
+
+# print top words table if available
+if (exists("top_words") && nrow(top_words) > 0) {
+  top_words
+} else {
+  message("Top words table not available.")
+}
+
+# print top bigrams table if available
+if (exists("top_bigrams") && nrow(top_bigrams) > 0) {
+  top_bigrams
+} else {
+  message("Top bigrams table not available.")
+}
+```
+## 10. Final Narrative Summary of Results
+```{r}
+
+# generate a detailed descriptive summary of all results in plain language
+
+if (nrow(feature_means) == 2) {
+
+  # extract group means for readability
+  control_unique <- feature_means %>% filter(group == "control") %>% pull(mean_unique_words)
+  dementia_unique <- feature_means %>% filter(group == "dementia") %>% pull(mean_unique_words)
+
+  control_filler <- feature_means %>% filter(group == "control") %>% pull(mean_filler_count)
+  dementia_filler <- feature_means %>% filter(group == "dementia") %>% pull(mean_filler_count)
+
+  control_ttr <- feature_means %>% filter(group == "control") %>% pull(mean_TTR)
+  dementia_ttr <- feature_means %>% filter(group == "dementia") %>% pull(mean_TTR)
+
+  cat("\n================ FINAL SUMMARY OF RESULTS ================\n\n")
+
+  # vocabulary interpretation
+  cat("Vocabulary Diversity:\n")
+  cat("The control group produced an average of", round(control_unique, 2), "unique words per transcript, while the dementia group produced an average of", round(dementia_unique, 2), "unique words.\n")
+
+  if (dementia_unique < control_unique) {
+    cat("This suggests that individuals with Alzheimer’s disease use a more limited vocabulary compared to healthy controls, indicating reduced lexical diversity.\n\n")
+  } else {
+    cat("This suggests that vocabulary diversity is similar or higher in the dementia group in this dataset.\n\n")
+  }
+
+  # filler interpretation
+  cat("Filler Word Usage (um, uh):\n")
+  cat("The control group used an average of", round(control_filler, 2), "filler words per transcript, while the dementia group used an average of", round(dementia_filler, 2), ".\n")
+
+  if (dementia_filler > control_filler) {
+    cat("This indicates that individuals with Alzheimer’s disease rely more on filler words, which may reflect hesitation, word-finding difficulty, or reduced fluency.\n\n")
+  } else {
+    cat("This indicates that filler word usage is not higher in the dementia group in this dataset.\n\n")
+  }
+
+  # TTR interpretation
+  cat("Type-Token Ratio (TTR):\n")
+  cat("The average TTR for the control group is", round(control_ttr, 3), "while the dementia group has an average TTR of", round(dementia_ttr, 3), ".\n")
+
+  if (dementia_ttr < control_ttr) {
+    cat("This suggests that the dementia group shows more repetition in language, using the same words more frequently.\n\n")
+  } else {
+    cat("This suggests that repetition levels are similar or lower in the dementia group in this dataset.\n\n")
+  }
+
+  # statistical interpretation
+  cat("Statistical Tests:\n")
+
+  if (inherits(ttest_unique, "htest")) {
+    cat("For unique words, the p-value is", round(ttest_unique$p.value, 4), ". ")
+    if (ttest_unique$p.value < 0.05) {
+      cat("This indicates a statistically significant difference between groups.\n")
+    } else {
+      cat("This indicates no statistically significant difference between groups.\n")
+    }
+  }
+
+  if (inherits(ttest_filler, "htest")) {
+    cat("For filler words, the p-value is", round(ttest_filler$p.value, 4), ". ")
+    if (ttest_filler$p.value < 0.05) {
+      cat("This indicates a statistically significant difference between groups.\n")
+    } else {
+      cat("This indicates no statistically significant difference between groups.\n")
+    }
+  }
+
+  if (inherits(ttest_ttr, "htest")) {
+    cat("For TTR, the p-value is", round(ttest_ttr$p.value, 4), ". ")
+    if (ttest_ttr$p.value < 0.05) {
+      cat("This indicates a statistically significant difference between groups.\n\n")
+    } else {
+      cat("This indicates no statistically significant difference between groups.\n\n")
+    }
+  }
+
+  # effect size interpretation
+  cat("Effect Sizes (Cohen’s d):\n")
+  cat("Unique words d =", round(cohens_d_unique, 3), "\n")
+  cat("Filler words d =", round(cohens_d_filler, 3), "\n")
+  cat("TTR d =", round(cohens_d_ttr, 3), "\n")
+
+  cat("Effect sizes help show how large the differences are between groups.\n")
+  cat("Values around 0.2 are small, around 0.5 are moderate, and above 0.8 are large differences.\n\n")
+
+  # overall conclusion
+  cat("Overall Interpretation:\n")
+
+  if (dementia_unique < control_unique && dementia_filler > control_filler) {
+    cat("Overall, the results support the hypothesis that individuals with Alzheimer’s disease use simpler and more repetitive language. They show reduced vocabulary diversity and increased filler word usage.\n")
+  } else {
+    cat("Overall, the results provide partial or weak support for the hypothesis. Some expected patterns are not strongly observed in this dataset.\n")
+  }
+
+  cat("\n=========================================================\n")
+}
+```
+
+```{r}
+# create TTR boxplot only when data exists
+if (nrow(features_df) > 0 && n_distinct(features_df$group) > 0) {
+  ttr_plot <- ggplot(features_df, aes(x = group, y = TTR, fill = group)) +
+    geom_boxplot(alpha = 0.7) +                                         # draw boxplot for TTR
+    labs(
+      title = "Type-Token Ratio (TTR) by Group",                         # clear publication title
+      x = "Group",                                                       # x-axis label
+      y = "Type-Token Ratio (Unique / Total Words)"                      # y-axis label
+    ) +
+    scale_fill_manual(values = c("control" = "#2C7FB8", "dementia" = "#D95F0E")) +  # consistent colors
+    common_plot_theme                                                    # apply same theme
+
+  print(ttr_plot)                                                        # print TTR plot
+} else {
+  message("TTR boxplot skipped: no valid data.")
+}
+
+# optional short interpretation (aligned with your actual stats)
+if (nrow(feature_means) == 2) {
+  control_ttr <- feature_means %>% filter(group == "control") %>% pull(mean_TTR)
+  dementia_ttr <- feature_means %>% filter(group == "dementia") %>% pull(mean_TTR)
+
+  cat("\nTTR Plot Interpretation:\n")
+  cat("Control mean TTR:", round(control_ttr, 3), "\n")
+  cat("Dementia mean TTR:", round(dementia_ttr, 3), "\n")
+
+  cat("The distributions appear highly similar across groups, which is consistent with the non-significant t-test result.\n")
+}
+```
+
